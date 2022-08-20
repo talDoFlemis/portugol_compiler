@@ -1,25 +1,37 @@
-use anyhow::{anyhow, Result};
+use anyhow::{bail, Result};
 use thiserror::Error;
+
+pub mod macros;
 
 #[derive(Error, Debug)]
 pub enum LexerError {
     #[error("Invalid header (expected {expected:?}, got {found:?})")]
-    MissingExpectedToken { expected: TokenType, found: Token },
+    MissingExpectedToken { expected: Token, found: Token },
 
     #[error("Unknown Symbol found {symbol:?}")]
     UnknownSymbol { symbol: String },
 
     #[error("Misbalanced symbol {symbol:?}, expected {expected:?}")]
     MisbalancedSymbol { symbol: char, expected: char },
+
+    #[error("Unable to parse the number {number:?}")]
+    UnknownNumber { number: String },
+
+    #[error("Unable to determinate the end of string")]
+    UnfinishedString,
 }
 
-#[derive(Debug)]
-pub enum PunctuationType {
-    Open,
-    Close,
+pub type Token = TokenType;
+pub type BalancingDepth = i32;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PunctuationKind {
+    Open(BalancingDepth),
+    Close(BalancingDepth),
+    Separator,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Operators {
     Add,
     Sub,
@@ -29,31 +41,30 @@ pub enum Operators {
     Assign,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Keyword {
     IF,
     THEN,
     RETURN,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum NumericHint {
-    Interger,
+    Integer,
     FloatingPoint,
 }
 
-pub type Token = TokenType;
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum TokenType {
     //End of token string
     EOF,
     //Identifier
     ID,
-    //Pontuation [,{.(
-    Punctuation { raw: char, r#type: PunctuationType },
+    //Pontuation [ { ( , .
+    Punctuation { raw: char, kind: PunctuationKind },
     //Integer Literal
     Numeric { raw: String, hint: NumericHint },
+    String(String),
     //Operators
     Op(Operators),
     //Keywords
@@ -94,11 +105,12 @@ impl<'a> Lexer<'a> {
             '(' => ')',
             '{' => '}',
             '[' => ']',
+            _ => panic!("Can't balance something that isn't supposed to be balanced"),
         }
     }
 
-    fn push_symbol(&mut self, c: &char) -> i32 {
-        match self.balancing_shit.get_mut(&c) {
+    fn push_symbol(&mut self, c: &char) -> BalancingDepth {
+        match self.balancing_shit.get_mut(c) {
             Some(d) => {
                 *d += 1;
                 *d - 1
@@ -110,39 +122,41 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn pop_symbol(&mut self, c: &char) -> Result<i32> {
-        match self.balancing_shit.get_mut(&Lexer::map_balance(&c)) {
+    fn pop_symbol(&mut self, c: &char) -> Result<BalancingDepth> {
+        match self.balancing_shit.get_mut(&Lexer::map_balance(c)) {
             Some(v) => {
                 if *v >= 1 {
                     *v -= 1;
                     Ok(*v)
                 } else {
-                    Err(anyhow!(LexerError::MisbalancedSymbol {
+                    bail!(LexerError::MisbalancedSymbol {
                         symbol: *c,
-                        expected: Lexer::map_balance(&c)
-                    }))
+                        expected: Lexer::map_balance(c)
+                    })
                 }
             }
-            None => Err(anyhow!(LexerError::MisbalancedSymbol {
+            None => bail!(LexerError::MisbalancedSymbol {
                 symbol: *c,
-                expected: Lexer::map_balance(&c)
-            })),
+                expected: Lexer::map_balance(c)
+            }),
         }
     }
 
     //Search for the next non whitespace token
     fn skip_whitespace(&mut self) {
-        while let Some(c) = self.chars.next_if(|c| c.is_whitespace()) {}
+        while self.chars.next_if(|c| c.is_whitespace()).is_some() {}
     }
 
+    //Consume the next char if it exists and update the lexer position
     fn consume_char(&mut self) -> Option<char> {
         match self.chars.next() {
             Some(c) => {
                 self.cur_col += 1;
                 self.code_offset += 1;
+
                 if c == '\n' {
                     self.cur_line += 1;
-                    self.cur_col = 1;
+                    self.cur_col += 1;
                 }
 
                 Some(c)
