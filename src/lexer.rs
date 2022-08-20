@@ -59,7 +59,7 @@ pub enum TokenType {
     //End of token string
     EOF,
     //Identifier
-    ID,
+    ID(String),
     //Pontuation [ { ( , .
     Punctuation { raw: char, kind: PunctuationKind },
     //Integer Literal
@@ -214,10 +214,23 @@ impl<'a> Lexer<'a> {
         let mut buf = String::new();
 
         loop {
-            match self.chars.next() {
+            match self.consume_char() {
                 Some('"') => break Ok(TokenType::String(buf)),
                 Some(c) => buf.push(c),
                 None => bail!(LexerError::UnfinishedString),
+            }
+        }
+    }
+
+    fn parse_id(&mut self, start: &char) -> Result<TokenType> {
+        let mut buf = String::from(*start);
+
+        loop {
+            match self.chars.peek() {
+                Some(c) if c.is_ascii_alphabetic() || c.is_ascii_digit() || *c == '.' => {
+                    buf.push(self.consume_char().unwrap())
+                }
+                _ => break Ok(TokenType::ID(buf)),
             }
         }
     }
@@ -234,6 +247,11 @@ impl<'a> Lexer<'a> {
             }),
             '0'..='9' | '.' => Ok(self.parse_number(c)?),
             '"' => Ok(self.parse_string()?),
+            ';' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Separator,
+            }),
+            c if c.is_ascii_alphabetic() || c == '_' => Ok(self.parse_id(&c)?),
             _ => bail!(LexerError::UnknownSymbol {
                 symbol: String::from(c)
             }),
@@ -275,5 +293,26 @@ mod tests {
         );
 
         Ok(())
+    }
+
+    #[test]
+    fn parsing_separators() {
+        let mut lexer = Lexer::new(";");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            TokenType::Punctuation {
+                raw: ';',
+                kind: PunctuationKind::Separator
+            }
+        );
+    }
+
+    #[test]
+    fn parsing_identifiers() {
+        let mut lexer = Lexer::new("aoeu");
+        assert_eq!(
+            lexer.next_token().unwrap(),
+            TokenType::ID(String::from("aoeu"))
+        );
     }
 }
