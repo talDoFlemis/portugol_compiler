@@ -165,25 +165,78 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    // fn parse_number(&mut self, start: char) -> Result<TokenType> {
-    //     let mut seen_dot = false;
-    //     let mut seen_exp = false;
-    //
-    //     let mut number = String::from(start);
-    //
-    //     loop {
-    //         match self.chars.peek() {
-    //             Some(c) if *c == '.' && seen_dot => {}
-    //         }
-    //     }
-    // }
+    fn parse_number(&mut self, start: char) -> Result<TokenType> {
+        let mut seen_dot = false;
+        //TODO: Impl expression resolvers
+        // let mut seen_exp = false;
+        let radix = 10;
 
-    fn tokenize(c: char) -> Result<TokenType> {
+        let mut number = String::from(start);
+
+        if start == '.' {
+            seen_dot = true;
+        }
+
+        loop {
+            match self.consume_char() {
+                Some(c) if c == '.' => {
+                    number.push(c);
+                    match seen_dot {
+                        true => {
+                            bail!(LexerError::UnknownNumber { number })
+                        }
+                        false => {
+                            seen_dot = true;
+                        }
+                    }
+                }
+                Some(c) if c.is_digit(radix) => number.push(c),
+                Some(c) if c.is_ascii_alphabetic() => {
+                    number.push(c);
+                    bail!(LexerError::UnknownNumber { number })
+                }
+                _ => {
+                    break Ok(TokenType::Numeric {
+                        raw: number,
+                        hint: if seen_dot {
+                            NumericHint::FloatingPoint
+                        } else {
+                            NumericHint::Integer
+                        },
+                    })
+                }
+            }
+        }
+    }
+
+    //TODO: Add escaping
+    fn parse_string(&mut self) -> Result<TokenType> {
+        let mut buf = String::new();
+
+        loop {
+            match self.chars.next() {
+                Some('"') => break Ok(TokenType::String(buf)),
+                Some(c) => buf.push(c),
+                None => bail!(LexerError::UnfinishedString),
+            }
+        }
+    }
+
+    fn tokenize(&mut self, c: char) -> Result<TokenType> {
         match c {
-            '(' | '{' | '[' => Ok(TokenType::Punctuation { raw: &c, r#type:  }),
-            _ => Err(anyhow!(LexerError::UnknownSymbol {
+            '(' | '{' | '[' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Open(self.push_symbol(&c)),
+            }),
+            ')' | '}' | ']' => Ok(TokenType::Punctuation {
+                raw: c,
+                kind: PunctuationKind::Close(self.pop_symbol(&c)?),
+            }),
+            '0'..='9' | '.' => Ok(self.parse_number(c)?),
+            '"' => Ok(self.parse_string()?),
+            _ => bail!(LexerError::UnknownSymbol {
                 symbol: String::from(c)
-            })),
+            }),
         }
     }
 
@@ -202,8 +255,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ignore_whitespace() {
-        let mut lexer = Lexer::new("   k");
-        lexer.skip_whitespace();
+    fn ignore_whitespace() -> Result<()> {
+        let mut lexer = Lexer::new("   {");
+        let token = TokenType::Punctuation {
+            raw: '{',
+            kind: PunctuationKind::Open(0),
+        };
+
+        assert_eq!(lexer.next_token()?, token);
+        Ok(())
+    }
+
+    #[test]
+    fn parsing_str() -> Result<()> {
+        let mut lexer = Lexer::new("\"aoeuaoeu\"");
+        assert_eq!(
+            lexer.next_token()?,
+            TokenType::String("aoeuaoeu".to_string())
+        );
+
+        Ok(())
     }
 }
